@@ -217,6 +217,8 @@ The Reddit API is biased toward more-recent content. Most Reddit posts about Yee
 - **`data/sentiment/vader_daily_sentiment.csv`** — daily time series for visualisation in the Streamlit dashboard.
 - **VADER vs FinBERT comparison** — once FinBERT is installed, compute the Pearson correlation between `vader_sentiment_mean` and `finbert_sentiment_mean` to measure agreement.
 
+  > Done. See [`docs/member_b_vader_vs_finbert.md`](member_b_vader_vs_finbert.md) for the full comparison report, plots, and feature-selection recommendation for Member C.
+
 ### Recommended next steps for Member C
 
 1. `pip install transformers torch` → re-run `finbert_scorer.py`, `aggregate_sentiment.py`, `merge_sentiment_price.py`.
