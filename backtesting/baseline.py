@@ -21,4 +21,22 @@ def random_walk_forecast(prices: np.ndarray, horizon: int) -> np.ndarray:
         Array of shape (num_windows, horizon) with naive predictions
     """
     # TODO: Implement sliding window naive forecast
-    raise NotImplementedError
+    # calculate num_windows
+    # Input validation: check if horizon is valid
+    if horizon >= len(prices):
+        raise ValueError(
+            f"Forecast horizon {horizon} must be less than the length of historical data {len(prices)}."
+        )
+
+    num_windows = len(prices) - horizon
+    predictions = []
+
+
+    for i in range(num_windows):
+
+        current_price = prices[i + horizon - 1]
+
+        pred = np.full(horizon, current_price, dtype=np.float32)
+        predictions.append(pred)
+
+    return np.array(predictions)
