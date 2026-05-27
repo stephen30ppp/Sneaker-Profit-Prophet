@@ -17,6 +17,7 @@ MODEL_DIR = ROOT_DIR / "models" / "checkpoints"
 
 # ── API Keys (from .env) ──────────────────────────────
 TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 # ── Model Hyperparameters ─────────────────────────────
 SEQUENCE_LENGTH = 30          # lookback window (days)
