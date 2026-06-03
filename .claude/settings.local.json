@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Users/my00850ml/Downloads/py_project/.venv/bin/pip list *)",
+      "Bash(.venv/bin/python *)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/pip show *)",
+      "Bash(python3 -m venv .venv)"
+    ]
+  }
+}

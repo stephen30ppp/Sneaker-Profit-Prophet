@@ -11,45 +11,97 @@ import torch
 from config import SEQUENCE_LENGTH, FORECAST_HORIZON, MODEL_DIR
 
 
+def _build_feature_tensor(
+    price_sequence: list[float],
+    sentiment_sequence: list[float] | None,
+) -> tuple[torch.Tensor, float, float]:
+    """
+    Build a (1, SEQUENCE_LENGTH, 4) tensor with feature order:
+    [price_norm, sentiment_mean, return_1d, volatility_7d].
+    """
+    prices_arr = np.asarray(price_sequence, dtype=np.float32)
+    prices_arr = np.nan_to_num(prices_arr, nan=0.0, posinf=0.0, neginf=0.0)
+    if prices_arr.size == 0:
+        raise ValueError("price_sequence is empty")
+
+    sentiments_arr = np.asarray(sentiment_sequence or [], dtype=np.float32)
+    sentiments_arr = np.nan_to_num(sentiments_arr, nan=0.0, posinf=0.0, neginf=0.0)
+
+    prices = prices_arr[-SEQUENCE_LENGTH:]
+    if prices.size < SEQUENCE_LENGTH:
+        pad_len = SEQUENCE_LENGTH - prices.size
+        prices = np.concatenate([np.full(pad_len, float(prices[0]), dtype=np.float32), prices])
+
+    sents = sentiments_arr[-SEQUENCE_LENGTH:]
+    if sents.size < SEQUENCE_LENGTH:
+        pad_len = SEQUENCE_LENGTH - sents.size
+        sents = np.concatenate([np.zeros(pad_len, dtype=np.float32), sents])
+
+    price_mean = float(prices.mean())
+    price_std = float(prices.std())
+    if price_std > 1e-8:
+        price_norm = (prices - price_mean) / price_std
+    else:
+        price_norm = np.zeros_like(prices)
+
+    return_1d = np.zeros_like(price_norm)
+    prev = price_norm[:-1]
+    delta = np.diff(price_norm)
+    valid = np.abs(prev) > 1e-8
+    return_1d[1:] = np.where(valid, delta / prev, 0.0)
+
+    volatility_7d = np.zeros_like(return_1d)
+    for i in range(return_1d.size):
+        start = max(0, i - 6)
+        window = return_1d[start : i + 1]
+        volatility_7d[i] = float(window.std(ddof=1)) if window.size > 1 else 0.0
+
+    seq = np.column_stack([price_norm, sents, return_1d, volatility_7d]).astype(np.float32)
+    x = torch.from_numpy(seq).unsqueeze(0)
+    return x, price_mean, price_std
+
+
 def get_lstm_forecast(price_sequence: list[float], sentiment_sequence: list[float]) -> dict:
     """
     Run LSTM model on recent price+sentiment data, return 30-day forecast.
     """
     from models.lstm_model import SneakerLSTM
 
-    prices = price_sequence[-SEQUENCE_LENGTH:]
-    sents = sentiment_sequence[-SEQUENCE_LENGTH:]
+    x, price_mean, price_std = _build_feature_tensor(price_sequence, sentiment_sequence)
 
-    if len(prices) < SEQUENCE_LENGTH:
-        pad_len = SEQUENCE_LENGTH - len(prices)
-        prices = [prices[0]] * pad_len + prices
-        sents = [0.0] * pad_len + sents
-
-    seq = np.column_stack([prices, sents])
-    x = torch.FloatTensor(seq).unsqueeze(0)
-
-    model = SneakerLSTM(input_size=2)
+    model = SneakerLSTM(input_size=4)
     checkpoint_path = MODEL_DIR / "lstm_best.pt"
+    model_source = "checkpoint"
     if checkpoint_path.exists():
         model.load_state_dict(torch.load(checkpoint_path, map_location="cpu", weights_only=True))
+    else:
+        model_source = "untrained"
 
     model.eval()
     with torch.no_grad():
-        prediction = model(x).squeeze().numpy()
+        prediction_norm = model(x).squeeze().numpy()
 
-    if prediction.ndim == 0:
-        prediction = np.array([float(prediction)])
+    if prediction_norm.ndim == 0:
+        prediction_norm = np.array([float(prediction_norm)])
 
-    current_price = price_sequence[-1]
-    predicted_final = float(prediction[-1])
+    if price_std > 1e-8:
+        prediction_price = prediction_norm * price_std + price_mean
+    else:
+        prediction_price = np.full_like(prediction_norm, price_mean)
+
+    current_price = float(np.asarray(price_sequence, dtype=np.float32)[-1])
+    predicted_final = float(prediction_price[-1])
 
     return {
         "model": "LSTM",
+        "model_source": model_source,
         "forecast_days": FORECAST_HORIZON,
-        "predicted_prices": [round(p, 2) for p in prediction.tolist()],
+        "predicted_prices": [round(float(p), 2) for p in prediction_price.tolist()],
+        "predicted_norm": [round(float(p), 4) for p in prediction_norm.tolist()],
         "predicted_final_price": round(predicted_final, 2),
         "predicted_change_pct": round((predicted_final - current_price) / current_price * 100, 2),
         "trend_direction": "UP" if predicted_final > current_price else "DOWN",
+        "explanation": "Forecast generated from 4-feature input [price_norm, sentiment_mean, return_1d, volatility_7d].",
     }
 
 
@@ -59,39 +111,41 @@ def get_gru_forecast(price_sequence: list[float], sentiment_sequence: list[float
     """
     from models.gru_model import SneakerGRU
 
-    prices = price_sequence[-SEQUENCE_LENGTH:]
-    sents = sentiment_sequence[-SEQUENCE_LENGTH:]
+    x, price_mean, price_std = _build_feature_tensor(price_sequence, sentiment_sequence)
 
-    if len(prices) < SEQUENCE_LENGTH:
-        pad_len = SEQUENCE_LENGTH - len(prices)
-        prices = [prices[0]] * pad_len + prices
-        sents = [0.0] * pad_len + sents
-
-    seq = np.column_stack([prices, sents])
-    x = torch.FloatTensor(seq).unsqueeze(0)
-
-    model = SneakerGRU(input_size=2)
+    model = SneakerGRU(input_size=4)
     checkpoint_path = MODEL_DIR / "gru_best.pt"
+    model_source = "checkpoint"
     if checkpoint_path.exists():
         model.load_state_dict(torch.load(checkpoint_path, map_location="cpu", weights_only=True))
+    else:
+        model_source = "untrained"
 
     model.eval()
     with torch.no_grad():
-        prediction = model(x).squeeze().numpy()
+        prediction_norm = model(x).squeeze().numpy()
 
-    if prediction.ndim == 0:
-        prediction = np.array([float(prediction)])
+    if prediction_norm.ndim == 0:
+        prediction_norm = np.array([float(prediction_norm)])
 
-    current_price = price_sequence[-1]
-    predicted_final = float(prediction[-1])
+    if price_std > 1e-8:
+        prediction_price = prediction_norm * price_std + price_mean
+    else:
+        prediction_price = np.full_like(prediction_norm, price_mean)
+
+    current_price = float(np.asarray(price_sequence, dtype=np.float32)[-1])
+    predicted_final = float(prediction_price[-1])
 
     return {
         "model": "GRU",
+        "model_source": model_source,
         "forecast_days": FORECAST_HORIZON,
-        "predicted_prices": [round(p, 2) for p in prediction.tolist()],
+        "predicted_prices": [round(float(p), 2) for p in prediction_price.tolist()],
+        "predicted_norm": [round(float(p), 4) for p in prediction_norm.tolist()],
         "predicted_final_price": round(predicted_final, 2),
         "predicted_change_pct": round((predicted_final - current_price) / current_price * 100, 2),
         "trend_direction": "UP" if predicted_final > current_price else "DOWN",
+        "explanation": "Forecast generated from 4-feature input [price_norm, sentiment_mean, return_1d, volatility_7d].",
     }
 
 
